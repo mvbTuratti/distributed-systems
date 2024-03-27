@@ -1,60 +1,90 @@
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-import asyncio  # Import asyncio for task creation
+from pydantic import BaseModel
+from json import dumps, loads
 import pika
+import uvicorn
+
+import random
+
+def generate_funny_name(): 
+    adjectives = ["adorable", "bubbly", "crazy", "dizzy", "energetic", "fluffy", "giggly", "happy", "jolly", "kooky", "loopy", "merry", "nutty", "playful", "quirky", "silly", "twinkly", "wacky", "zany"]
+    nouns = ["apple", "banana", "cookie", "donut", "elephant", "flamingo", "giraffe", "hedgehog", "iguana", "jellyfish", "koala", "lemur", "monkey", "narwhal", "octopus", "penguin", "quokka", "rhinoceros", "sloth", "toucan", "unicorn", "vampire", "walrus", "x-ray fish", "yeti", "zebra"]
+
+    # Generate a funny name by combining a random adjective and noun
+    adjective = random.choice(adjectives)
+    noun = random.choice(nouns)
+    separator = random.choice(["-", "_", " ", ""])
+    funny_name = f"{adjective}{separator}{noun}"
+
+    return funny_name
 
 RABBITMQ_HOST = "localhost"
 MESSAGE_QUEUE = "messages"
 
 
 app = FastAPI()
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-global websocket
-websocket = None
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host=RABBITMQ_HOST))
+channel = connection.channel()
+channel.queue_declare(queue=MESSAGE_QUEUE)
 
-async def callback(ch, method, properties, body):
-    global websocket
-    await websocket.send_text(body.decode())
-    ch.basic_ack(delivery_tag=method.delivery_tag)
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+        self.sockets: dict[str, WebSocket] = {}
 
+    async def connect(self, websocket: WebSocket, client_id: str):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        self.sockets[client_id] = websocket
+    def disconnect(self, websocket: WebSocket, client_id: str):
+        self.active_connections.remove(websocket)
+        del self.sockets[client_id]
+    def get_websocket_for_connection(self, client_id: str):
+        return self.sockets[client_id]
+    async def send_message_to_socket(self, user_id, message):
+        await self.get_websocket_for_connection(user_id).send_text(message)
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            await connection.send_text(message)
 
-async def listen_to_events():
-    try:
-        connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
-        channel = connection.channel()
-
-        channel.queue_declare(queue=MESSAGE_QUEUE)
-        channel.basic_consume(queue=MESSAGE_QUEUE, on_message_callback=callback, auto_ack=True)
-        print(' [*] Waiting for messages. To exit press CTRL+C')
-        channel.start_consuming()
-    except:
-        print("consumer error!")
+manager = ConnectionManager()
 
 
 @app.websocket("/ws")
-async def handle_websocket(webs: WebSocket):
-    websocket = webs  # Store the connected websocket
+async def websocket_endpoint(websocket: WebSocket):
+    connection_id = generate_funny_name()
+    print(f"{connection_id} joined!")
+    await manager.connect(websocket, connection_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            print(f'received message from websocket: {data}')
+            [hash, content] = data.split(" - ", 1)
+            channel.basic_publish(exchange='', routing_key=MESSAGE_QUEUE, body=dumps({"name":connection_id, "content": content, "hash": hash}))
+    except:
+        manager.disconnect(websocket, connection_id)
 
-    # Start listening to events in a separate task
-    await asyncio.create_task(listen_to_events())
+class Message(BaseModel):
+    name:str
+    content: str
+    hash: str
 
-    async for message in websocket.receive_text():
-        connection = pika.BlockingConnection(
-        pika.ConnectionParameters(host=RABBITMQ_HOST))
-        channel = connection.channel()
+@app.post("/message/")
+async def broadcast_message(body: Message):
+    print(body)
+    await manager.broadcast(dumps({"n": body.name, "c": body.content, "h": body.hash}))
+    return {"status":"sent"}
 
-        channel.queue_declare(queue=MESSAGE_QUEUE)
-
-        channel.basic_publish(exchange='', routing_key=MESSAGE_QUEUE, body=message)
-        print(" [x] Sent 'Hello World!'")
-        connection.close()
-
-    await websocket.accept()
-
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse )
 async def return_app(request: Request):
-    # Assuming index.html is in the static directory
     return HTMLResponse(content=open("static/index.html", "r").read())
 
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
