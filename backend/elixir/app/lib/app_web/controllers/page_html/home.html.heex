@@ -1,0 +1,12 @@
+<div class="flex flex-col h-screen">
+  <div id="chat" class="flex-1 px-12 mb-8 scrollable-content p-4 overflow-y-auto">
+    <template v-for="chat in chats">
+    </template>
+  </div>
+  <div id="input_text" class="h-16 flex justify-center p-2">
+    <input type="text" placeholder="" @keyup.enter="onEnter" maxlength="4000" v-model="message" class="input input-bordered w-full mx-8" />
+  </div>
+  <div class="h-8">
+    <span class="text-xs opacity-50 text-white">{{ clientName }}</span>
+  </div>
+</div>

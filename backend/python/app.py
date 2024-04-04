@@ -16,7 +16,7 @@ def generate_funny_name():
     adjective = random.choice(adjectives)
     noun = random.choice(nouns)
     separator = random.choice(["-", "_", " ", ""])
-    funny_name = f"{adjective}{separator}{noun}"
+    funny_name = f"{adjective}{separator}{noun} Python"
 
     return funny_name
 
@@ -60,7 +60,7 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 async def run_listener_loop():
-    connection = await aio_pika.connect_robust(host=RABBITMQ_HOST)
+    connection = await aio_pika.connect(host=RABBITMQ_HOST)
     channel = await connection.channel()
     await channel.set_qos(prefetch_count=1)
     queue = await channel.declare_queue(MESSAGE_QUEUE)

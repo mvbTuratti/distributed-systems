@@ -1,0 +1,13 @@
+<div class="flex flex-col h-screen">
+  <div id="chat" class="flex-1 px-12 mb-8 scrollable-content p-4 overflow-y-auto">
+        <%= for m <- Enum.reverse(@messages) do %>
+            <.message user={m.user} sender={m.sender} hash={m.hash} status={m.status} message={m.message} timestamp={m.timestamp} first={m.first} last={m.last} />
+        <% end %>
+  </div>
+  <div id="input_text" class="h-16 flex justify-center p-2">
+    <input type="text" id="message-input" value={@message} phx-keydown="message" maxlength="4000" class="input input-bordered w-full mx-8" />
+  </div>
+  <div class="h-8">
+    <span class="text-xs opacity-50 text-white"><%= @client_name %></span>
+  </div>
+</div>
