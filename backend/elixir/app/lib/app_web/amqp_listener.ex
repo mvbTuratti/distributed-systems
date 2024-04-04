@@ -6,20 +6,30 @@ defmodule AppWeb.AmqpListener do
     GenServer.start_link(__MODULE__, [], name: Listener)
   end
 
-  @exchange    "gen_server_test_exchange"
+  # @exchange    "gen_server_test_exchange"
+  @exchange    "message"
   @queue       "messages"
   @queue_error "#{@queue}_error"
 
   def init(_opts) do
-    {:ok, conn} = Connection.open()
-    {:ok, chan} = Channel.open(conn)
-    setup_queue(chan)
+    # {:ok, conn} = Connection.open()
+    # {:ok, chan} = Channel.open(conn)
+    # setup_queue(chan)
 
-    # Limit unacknowledged messages to 10
-    :ok = Basic.qos(chan, prefetch_count: 20)
-    # Register the GenServer process as a consumer
-    {:ok, _consumer_tag} = Basic.consume(chan, @queue)
-    {:ok, %{channel: chan, messages: [], clients: []}}
+    # # Limit unacknowledged messages to 10
+    # :ok = Basic.qos(chan, prefetch_count: 1)
+    # # Register the GenServer process as a consumer
+    # {:ok, _consumer_tag} = Basic.consume(chan, @queue)
+    # {:ok, %{channel: chan, messages: [], clients: []}}
+    {:ok, connection} = Connection.open
+    {:ok, channel} = Channel.open(connection)
+
+    Exchange.declare(channel, "logs", :fanout)
+    {:ok, %{queue: queue_name}} = Queue.declare(channel, "", exclusive: true)
+    Queue.bind(channel, queue_name, @exchange)
+    Basic.qos(channel, prefetch_count: 1)
+    Basic.consume(channel, queue_name, nil)
+    {:ok, %{channel: channel, messages: [], clients: []}}
   end
 
   # Confirmation sent by the broker after registering this process as a consumer
@@ -40,6 +50,7 @@ defmodule AppWeb.AmqpListener do
   def handle_info({:basic_deliver, payload, %{delivery_tag: tag, redelivered: redelivered}}, %{channel: chan, messages: msg} = state) do
     # You might want to run payload consumption in separate Tasks in production
     payload = consume(chan, tag, redelivered, payload)
+    # payload = %{payload | "status" => true}
     state = %{state | messages: [ payload | msg ] |> Enum.take(30) }
     IO.puts("handling message from queue")
     IO.inspect(state[:clients])
@@ -63,13 +74,13 @@ defmodule AppWeb.AmqpListener do
     {:reply, :ok, state}
   end
 
-  defp setup_queue(chan) do
-    {:ok, _} = Queue.declare(chan, @queue_error)
-    # Messages that cannot be delivered to any consumer in the main queue will be routed to the error queue
-    {:ok, _} = Queue.declare(chan, @queue)
-    :ok = Exchange.fanout(chan, @exchange)
-    :ok = Queue.bind(chan, @queue, @exchange)
-  end
+  # defp setup_queue(chan) do
+  #   {:ok, _} = Queue.declare(chan, @queue_error)
+  #   # Messages that cannot be delivered to any consumer in the main queue will be routed to the error queue
+  #   {:ok, _} = Queue.declare(chan, @queue)
+  #   :ok = Exchange.fanout(chan, @exchange)
+  #   :ok = Queue.bind(chan, @queue, @exchange)
+  # end
 
   defp consume(channel, tag, redelivered, payload) do
 

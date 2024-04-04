@@ -2,6 +2,8 @@ defmodule AppWeb.Messages do
   use AppWeb, :live_view
   import AppWeb.AmqpListener, only: [add_client: 1, remove_client: 1]
 
+  @exchange "message"
+
   @impl true
   def mount(_, _session, socket) do
     {channel, connection} = set_amqp_publisher()
@@ -18,7 +20,6 @@ defmodule AppWeb.Messages do
 
   @impl true
   def handle_event("message", %{"key" => "Enter", "value" => value}, socket) do
-    IO.puts("Send message!")
     socket = add_user_message(socket, value) |> assign(message: "")
     # IO.inspect(socket)
     {:noreply, push_event(socket, "reset-message", %{})}
@@ -62,14 +63,15 @@ defmodule AppWeb.Messages do
   def set_amqp_publisher() do
     {:ok, connection} = AMQP.Connection.open
     {:ok, channel} = AMQP.Channel.open(connection)
-    # AMQP.Exchange.declare(channel, "messages", :fanout)
-    AMQP.Queue.declare(channel, "messages")
+    AMQP.Exchange.declare(channel, @exchange, :fanout)
+    # AMQP.Queue.declare(channel, "messages")
     {channel, connection}
   end
   def send_message_to_amqp(message, channel) do
     message = %{"name" => message[:user], "content" => message[:message], "hash" => message[:hash],
     "timestamp" => message[:timestamp]}
-    AMQP.Basic.publish(channel, "", "messages", Jason.encode!(message))
+    # AMQP.Basic.publish(channel, "", "messages", Jason.encode!(message))
+    AMQP.Basic.publish(channel, @exchange, "", Jason.encode!(message))
   end
 
   def timestamp() do

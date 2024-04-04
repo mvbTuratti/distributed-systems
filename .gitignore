@@ -1,6 +1,7 @@
 */dist
 */node_modules
 .DS_Store
+*.tool-versions
 backend/python/env/*
 backend/python/__pycache__/*
 # The directory Mix will write compiled artifacts to.
