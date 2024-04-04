@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, WebSocket
-import aio_pika
+from aio_pika import ExchangeType, connect
+from aio_pika.abc import AbstractIncomingMessage
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import asyncio
@@ -22,7 +23,7 @@ def generate_funny_name():
 
 RABBITMQ_HOST = "localhost"
 MESSAGE_QUEUE = "messages"
-
+EXCHANGE = 'message'
 
 app = FastAPI()
 
@@ -31,7 +32,8 @@ app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
 connection = pika.BlockingConnection(
     pika.ConnectionParameters(host=RABBITMQ_HOST))
 channel = connection.channel()
-channel.queue_declare(queue=MESSAGE_QUEUE)
+# channel.queue_declare(queue=MESSAGE_QUEUE)
+channel.exchange_declare(exchange=EXCHANGE, exchange_type='fanout')
 
 class ConnectionManager:
     def __init__(self):
@@ -53,25 +55,53 @@ class ConnectionManager:
     async def broadcast(self, message: str):
         for connection in self.active_connections:
             await connection.send_text(message)
-    async def add_message(self, msg):
+    def add_message(self, msg):
         if len(self.messages) < 30: return self.messages.append(msg)
         self.messages = [m for m in self.messages[1:]].append(msg)
 
 manager = ConnectionManager()
 
+async def on_message(message: AbstractIncomingMessage) -> None:
+    async with message.process():
+        print(f"[x] {message.body!r}")
+        payload = message.body.decode('utf-8')
+        manager.add_message(payload)
+        await manager.broadcast(payload)
+
 async def run_listener_loop():
-    connection = await aio_pika.connect(host=RABBITMQ_HOST)
-    channel = await connection.channel()
-    await channel.set_qos(prefetch_count=1)
-    queue = await channel.declare_queue(MESSAGE_QUEUE)
+    connection = await connect(host=RABBITMQ_HOST)
+    async with connection:
+        # Creating a channel
+        channel = await connection.channel()
+        await channel.set_qos(prefetch_count=1)
 
-    async def callback(message):
-        async with message.process():
-            payload = message.body.decode('utf-8')
-            await manager.add_message(payload)
-            await manager.broadcast(payload)
+        message_exchange = await channel.declare_exchange(
+            EXCHANGE, ExchangeType.FANOUT,
+        )
 
-    await queue.consume(callback)
+        # Declaring queue
+        queue = await channel.declare_queue(exclusive=True)
+
+        # Binding the queue to the exchange
+        await queue.bind(message_exchange)
+
+        # Start listening the queue
+        await queue.consume(on_message)
+
+        print(" [*] Waiting for messages.")
+        await asyncio.Future()
+    # # connection = await aio_pika.connect(host=RABBITMQ_HOST)
+    # channel = await connection.channel()
+    # await channel.set_qos(prefetch_count=1)
+    # queue = await channel.declare_queue(MESSAGE_QUEUE)
+
+    # async def callback(message):
+    #     async with message.process():
+    #         payload = message.body.decode('utf-8')
+    #         await manager.add_message(payload)
+    #         await manager.broadcast(payload)
+
+    # await queue.consume(callback)
 
 task = asyncio.create_task(run_listener_loop())
 
@@ -86,7 +116,7 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             print(f'received message from websocket: {data}')
             [hash, content] = data.split(" - ", 1)
-            channel.basic_publish(exchange='', routing_key=MESSAGE_QUEUE, 
+            channel.basic_publish(exchange=EXCHANGE, routing_key='', 
                                   body=dumps({"name":connection_id, "content": content, "hash": hash, 
                                               "timestamp": datetime.now().strftime("%d/%m/%Y, %H:%M:%S")}))
     except:
